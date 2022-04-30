@@ -1,19 +1,36 @@
 # Electra Smart Integration With Home Assistant
 
-Custom integrations to control Electra Air Conditioners
 
-AC devices will be discovered after the `electrasmart` integration is configured
+![alt text](https://brands.home-assistant.io/electrasmart/logo@2x.png)
 
-The integration can be configured from via the frontend, the user must provide a valid phone number that registered with the Electra Smart app.
+
+Custom integrations to control [Electra Air](https://www.electra-air.co.il) devices with [Home Assistant](https://www.home-assistant.io)
+
+Electra devices will be discovered after the `electrasmart` integration is configured
+
+The configuration can be done via the frontend, the user must provide a valid phone number that registered with the [Electra Smart](https://www.electra-air.co.il/page/smart) app.
+
 an OTP (One Time Password) will be generated and sent that phone number, provide this OTP in the config wizard and you should be good to go.
 
- ## Prerequisites
+## Installation
 
- In order to set up this integration, you need to have a valid phone number that is registered in the Electra Smart app
+1. Install the custom component in your HASS
+
+    This can be done either through HACS:
+    * `HACS`->`Integration`->`Custom repositories`
+    * Enter `https://github.com/jafar-atili/home-assistant-electrasmart` 
+    * click `Add`
+    
+    Manuall installation (without HACS)
+    * Download the electrasmart directory and place it in `config/custom_components/`
 
 
-## Optional Configuration 
+2. Add `Electra Smart` Integration (`Configuration`->`Devices & Services`->`ADD INTEGRATION`) 
+3. Enter your phone number (it must be registered with Electra Smart!)
+4. Enter the one time password (received via SMS) 
+5. Enjoy
 
-- Scan Interval 
+
+
 
  [In case you want to buy me a coffe :)](https://paypal.me/jafaratili?country.x=IL&locale.x=he_IL)
