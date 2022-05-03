@@ -33,10 +33,13 @@ from homeassistant.components.climate.const import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_TEMPERATURE, TEMP_CELSIUS
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryAuthFailed, PlatformNotReady
+from homeassistant.exceptions import (
+    ConfigEntryAuthFailed,
+    HomeAssistantError,
+    PlatformNotReady,
+)
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import UpdateFailed
 
 from .const import API_DELAY, DOMAIN
 
@@ -80,7 +83,7 @@ HVAC_ACTION_ELECTRA_TO_HASS = {
 _LOGGER = logging.getLogger(__name__)
 
 
-SCAN_INTERVAL = timedelta(seconds=10)
+SCAN_INTERVAL = timedelta(seconds=60)
 
 
 async def async_setup_entry(
@@ -181,7 +184,7 @@ class ElectraClimate(ClimateEntity):
                 self._electra_ac_device.name,
                 exp,
             )
-            raise UpdateFailed from electra.ElectraApiError
+            raise HomeAssistantError from electra.ElectraApiError
 
         else:
 
@@ -277,16 +280,25 @@ class ElectraClimate(ClimateEntity):
             try:
                 resp = await self._api.set_state(self._electra_ac_device)
             except electra.ElectraApiError as exp:
-                raise UpdateFailed(
-                    f"Failed to communicate with Electra API: {exp}"
-                ) from electra.ElectraApiError
+                err_message = f"Error communicating with API: {exp}"
+                if "client error" in err_message:
+                    err_message += ", Check your internet connection."
+                    raise HomeAssistantError(err_message) from electra.ElectraApiError
+
+                if electra.INTRUDER_LOCKOUT in err_message:
+                    err_message += (
+                        ", You must re-authenticate by adding the integration again"
+                    )
+                    raise ConfigEntryAuthFailed(
+                        err_message
+                    ) from electra.ElectraApiError
             else:
                 if not (
                     resp[electra.ATTR_STATUS] == electra.STATUS_SUCCESS
                     and resp[electra.ATTR_DATA][electra.ATTR_RES]
                     == electra.STATUS_SUCCESS
                 ):
-                    raise UpdateFailed(
+                    raise HomeAssistantError(
                         f"Failed to update {self._attr_name}, error: {resp}"
                     )
 
