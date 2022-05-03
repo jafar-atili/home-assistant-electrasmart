@@ -33,6 +33,7 @@ from homeassistant.components.climate.const import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_TEMPERATURE, TEMP_CELSIUS
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed, PlatformNotReady
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import UpdateFailed
@@ -99,9 +100,14 @@ async def get_devices(api):
     try:
         return await api.get_devices()
     except electra.ElectraApiError as exp:
-        raise UpdateFailed(
-            f"Error communicating with API: {exp}"
-        ) from electra.ElectraApiError
+        err_message = f"Error communicating with API: {exp}"
+        if "client error" in err_message:
+            err_message += ", Check your internet connection."
+            raise PlatformNotReady(err_message) from electra.ElectraApiError
+
+        if electra.INTRUDER_LOCKOUT in err_message:
+            err_message += ", You must re-authenticate by adding the integration again"
+            raise ConfigEntryAuthFailed(err_message) from electra.ElectraApiError
 
 
 class ElectraClimate(ClimateEntity):
