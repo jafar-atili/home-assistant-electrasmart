@@ -6,7 +6,6 @@ import logging
 import time
 
 import electra
-from homeassistant.components.adguard.switch import PARALLEL_UPDATES
 
 from homeassistant.components.climate import ClimateEntity
 from homeassistant.components.climate.const import (
@@ -85,7 +84,6 @@ _LOGGER = logging.getLogger(__name__)
 
 
 SCAN_INTERVAL = timedelta(seconds=60)
-
 PARALLEL_UPDATES = 1
 
 
