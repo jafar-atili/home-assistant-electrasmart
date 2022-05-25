@@ -1,5 +1,7 @@
 # Electra Smart Integration With Home Assistant
 
+![PyPI](https://img.shields.io/pypi/v/pyelectra?label=pypi%20package)
+![PyPI - Downloads](https://img.shields.io/pypi/dm/pyelectra)
 
 ![alt text](https://brands.home-assistant.io/electrasmart/logo@2x.png)
 
