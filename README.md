@@ -33,6 +33,18 @@ an OTP (One Time Password) will be generated and sent that phone number, provide
 5. Enjoy
 
 
+## Debugging the integration
 
+Add the following to your `configuration.yaml`
+
+```
+logger:
+  default: info
+  logs:
+    custom_components.electrasmart: debug
+    electra: debug
+```
+
+Share the logs with topic `[custom_components.electrasmart.climate]` and `[electra]`
 
  [In case you want to buy me a coffe :)](https://paypal.me/jafaratili?country.x=IL&locale.x=he_IL)
