@@ -133,12 +133,20 @@ class ElectraClimate(ClimateEntity):
         self._attr_max_temp = electra.MAX_TEMP
         self._attr_min_temp = electra.MIN_TEMP
         self._attr_temperature_unit = TEMP_CELSIUS
-        self._attr_swing_modes = [
-            SWING_BOTH,
-            SWING_HORIZONTAL,
-            SWING_VERTICAL,
-            SWING_OFF,
-        ]
+        self._attr_swing_modes = []
+
+        if self._electra_ac_device.can_vertical_swing():
+            self._attr_swing_modes.append(SWING_VERTICAL)
+        if self._electra_ac_device.can_horizontal_swing():
+            self._attr_swing_modes.append(SWING_HORIZONTAL)
+        if (
+            SWING_HORIZONTAL in self._attr_swing_modes
+            and SWING_VERTICAL in self._attr_swing_modes
+        ):
+            self._attr_swing_modes.append(SWING_BOTH)
+        if self._attr_swing_modes:
+            self._attr_swing_modes.append(SWING_OFF)
+
         self._attr_hvac_modes = [
             HVAC_MODE_OFF,
             HVAC_MODE_HEAT,
@@ -160,7 +168,6 @@ class ElectraClimate(ClimateEntity):
         self._consecutive_failures = 0
 
         _LOGGER.debug("Added %s Electra AC device", self._attr_name)
-
 
     async def async_update(self):
         """Update Electra device."""
