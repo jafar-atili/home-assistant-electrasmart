@@ -102,7 +102,11 @@ async def get_devices(api):
     """Return Electra."""
     _LOGGER.debug("Fetching Electra AC devices")
     try:
-        return await api.get_devices()
+        devices = await api.get_devices()
+        for device in devices:
+            await api.get_last_telemtry(device)
+        return devices
+
     except electra.ElectraApiError as exp:
         err_message = f"Error communicating with API: {exp}"
         if "client error" in err_message:
