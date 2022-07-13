@@ -4,8 +4,12 @@ from __future__ import annotations
 from datetime import timedelta
 import logging
 import time
+from typing import List
 
-import electra
+from electrasmart.api import ElectraApiError, Attributes, ElectraAPI, STATUS_SUCCESS
+from electrasmart.device import OperationMode, ElectraAirConditioner
+from electrasmart.device.const import MAX_TEMP, MIN_TEMP, Feature
+
 
 from homeassistant.components.climate import ClimateEntity
 from homeassistant.components.climate.const import (
@@ -36,7 +40,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import (
     ConfigEntryAuthFailed,
     HomeAssistantError,
-    PlatformNotReady,
+    ConfigEntryNotReady,
 )
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -44,40 +48,40 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from .const import API_DELAY, DOMAIN, CONSECUTIVE_FAILURE_THRESHOLD
 
 FAN_ELECTRA_TO_HASS = {
-    electra.OPER_FAN_SPEED_AUTO: FAN_AUTO,
-    electra.OPER_FAN_SPEED_LOW: FAN_LOW,
-    electra.OPER_FAN_SPEED_MED: FAN_MEDIUM,
-    electra.OPER_FAN_SPEED_HIGH: FAN_HIGH,
+    OperationMode.FAN_SPEED_AUTO: FAN_AUTO,
+    OperationMode.FAN_SPEED_LOW: FAN_LOW,
+    OperationMode.FAN_SPEED_MED: FAN_MEDIUM,
+    OperationMode.FAN_SPEED_HIGH: FAN_HIGH,
 }
 
 FAN_HASS_TO_ELECTRA = {
-    FAN_AUTO: electra.OPER_FAN_SPEED_AUTO,
-    FAN_LOW: electra.OPER_FAN_SPEED_LOW,
-    FAN_MEDIUM: electra.OPER_FAN_SPEED_MED,
-    FAN_HIGH: electra.OPER_FAN_SPEED_HIGH,
+    FAN_AUTO: OperationMode.FAN_SPEED_AUTO,
+    FAN_LOW: OperationMode.FAN_SPEED_LOW,
+    FAN_MEDIUM: OperationMode.FAN_SPEED_MED,
+    FAN_HIGH: OperationMode.FAN_SPEED_HIGH,
 }
 
 HVAC_MODE_ELECTRA_TO_HASS = {
-    electra.OPER_MODE_COOL: HVAC_MODE_COOL,
-    electra.OPER_MODE_HEAT: HVAC_MODE_HEAT,
-    electra.OPER_MODE_FAN: HVAC_MODE_FAN_ONLY,
-    electra.OPER_MODE_DRY: HVAC_MODE_DRY,
-    electra.OPER_MODE_AUTO: HVAC_MODE_AUTO,
+    OperationMode.MODE_COOL: HVAC_MODE_COOL,
+    OperationMode.MODE_HEAT: HVAC_MODE_HEAT,
+    OperationMode.MODE_FAN: HVAC_MODE_FAN_ONLY,
+    OperationMode.MODE_DRY: HVAC_MODE_DRY,
+    OperationMode.MODE_AUTO: HVAC_MODE_AUTO,
 }
 
 HVAC_MODE_HASS_TO_ELECTRA = {
-    HVAC_MODE_COOL: electra.OPER_MODE_COOL,
-    HVAC_MODE_HEAT: electra.OPER_MODE_HEAT,
-    HVAC_MODE_FAN_ONLY: electra.OPER_MODE_FAN,
-    HVAC_MODE_DRY: electra.OPER_MODE_DRY,
-    HVAC_MODE_AUTO: electra.OPER_MODE_AUTO,
+    HVAC_MODE_COOL: OperationMode.MODE_COOL,
+    HVAC_MODE_HEAT: OperationMode.MODE_HEAT,
+    HVAC_MODE_FAN_ONLY: OperationMode.MODE_FAN,
+    HVAC_MODE_DRY: OperationMode.MODE_DRY,
+    HVAC_MODE_AUTO: OperationMode.MODE_AUTO,
 }
 
 HVAC_ACTION_ELECTRA_TO_HASS = {
-    electra.OPER_MODE_COOL: CURRENT_HVAC_COOL,
-    electra.OPER_MODE_HEAT: CURRENT_HVAC_HEAT,
-    electra.OPER_MODE_FAN: CURRENT_HVAC_FAN,
-    electra.OPER_MODE_DRY: CURRENT_HVAC_DRY,
+    OperationMode.MODE_COOL: CURRENT_HVAC_COOL,
+    OperationMode.MODE_HEAT: CURRENT_HVAC_HEAT,
+    OperationMode.MODE_FAN: CURRENT_HVAC_FAN,
+    OperationMode.MODE_DRY: CURRENT_HVAC_DRY,
 }
 
 _LOGGER = logging.getLogger(__name__)
@@ -91,37 +95,33 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     """Add Electra AC devices."""
-    api = hass.data[DOMAIN][entry.entry_id]
+    api: ElectraAPI = hass.data[DOMAIN][entry.entry_id]
+    devices: List[ElectraAirConditioner] = await get_devices(api)
 
-    devices = await get_devices(api)
     _LOGGER.debug("Discovered %i Electra devices", len(devices))
     async_add_entities((ElectraClimate(device, api) for device in devices), True)
 
 
-async def get_devices(api):
+async def get_devices(api: ElectraAPI) -> List[ElectraAirConditioner]:
     """Return Electra."""
     _LOGGER.debug("Fetching Electra AC devices")
     try:
-        devices = await api.get_devices()
-        for device in devices:
-            await api.get_last_telemtry(device)
-        return devices
-
-    except electra.ElectraApiError as exp:
+        return await api.get_devices()
+    except ElectraApiError as exp:
         err_message = f"Error communicating with API: {exp}"
         if "client error" in err_message:
             err_message += ", Check your internet connection."
-            raise PlatformNotReady(err_message) from electra.ElectraApiError
+            raise ConfigEntryNotReady(err_message) from exp
 
-        if electra.INTRUDER_LOCKOUT in err_message:
+        if Attributes.INTRUDER_LOCKOUT in err_message:
             err_message += ", You must re-authenticate by adding the integration again"
-            raise ConfigEntryAuthFailed(err_message) from electra.ElectraApiError
+            raise ConfigEntryAuthFailed(err_message) from exp
 
 
 class ElectraClimate(ClimateEntity):
     """Define an Electra sensor."""
 
-    def __init__(self, device: electra.ElectraAirConditioner, api) -> None:
+    def __init__(self, device: ElectraAirConditioner, api: ElectraAPI) -> None:
         """Initialize Electra climate entity."""
         self._api = api
         self._electra_ac_device = device
@@ -134,14 +134,14 @@ class ElectraClimate(ClimateEntity):
         )
         self._attr_fan_modes = [FAN_AUTO, FAN_HIGH, FAN_MEDIUM, FAN_LOW]
         self._attr_target_temperature_step = 1
-        self._attr_max_temp = electra.MAX_TEMP
-        self._attr_min_temp = electra.MIN_TEMP
+        self._attr_max_temp = MAX_TEMP
+        self._attr_min_temp = MIN_TEMP
         self._attr_temperature_unit = TEMP_CELSIUS
         self._attr_swing_modes = []
 
-        if self._electra_ac_device.can_vertical_swing():
+        if Feature.V_SWING in self._electra_ac_device.features:
             self._attr_swing_modes.append(SWING_VERTICAL)
-        if self._electra_ac_device.can_horizontal_swing():
+        if Feature.H_SWING in self._electra_ac_device.features:
             self._attr_swing_modes.append(SWING_HORIZONTAL)
         if (
             SWING_HORIZONTAL in self._attr_swing_modes
@@ -194,7 +194,7 @@ class ElectraClimate(ClimateEntity):
                 self._electra_ac_device.name,
                 self._electra_ac_device.__dict__,
             )
-        except electra.ElectraApiError as exp:
+        except ElectraApiError as exp:
             self._consecutive_failures += 1
             _LOGGER.warning(
                 "Failed to get %s state: %s (try #%i since last success), keeping old state",
@@ -209,7 +209,7 @@ class ElectraClimate(ClimateEntity):
                     self._electra_ac_device.name,
                     exp,
                     self._consecutive_failures,
-                ) from electra.ElectraApiError
+                ) from ElectraApiError
         else:
             self._consecutive_failures = 0
             self._update_device_attrs()
@@ -252,7 +252,7 @@ class ElectraClimate(ClimateEntity):
             else HVAC_MODE_ELECTRA_TO_HASS[self._electra_ac_device.get_mode()]
         )
 
-        if self._electra_ac_device.get_mode() == electra.OPER_MODE_AUTO:
+        if self._electra_ac_device.get_mode() == OperationMode.MODE_AUTO:
             self._attr_hvac_action = None
         else:
             self._attr_hvac_action = (
@@ -297,24 +297,24 @@ class ElectraClimate(ClimateEntity):
 
         try:
             resp = await self._api.set_state(self._electra_ac_device)
-        except electra.ElectraApiError as exp:
+        except ElectraApiError as exp:
             err_message = f"Error communicating with API: {exp}"
             if "client error" in err_message:
                 err_message += ", Check your internet connection."
-                raise HomeAssistantError(err_message) from electra.ElectraApiError
+                raise HomeAssistantError(err_message) from ElectraApiError
 
-            if electra.INTRUDER_LOCKOUT in err_message:
+            if Attributes.INTRUDER_LOCKOUT in err_message:
                 err_message += (
                     ", You must re-authenticate by adding the integration again"
                 )
-                raise ConfigEntryAuthFailed(err_message) from electra.ElectraApiError
+                raise ConfigEntryAuthFailed(err_message) from ElectraApiError
 
             self._async_write_ha_state()
 
         else:
             if not (
-                resp[electra.ATTR_STATUS] == electra.STATUS_SUCCESS
-                and resp[electra.ATTR_DATA][electra.ATTR_RES] == electra.STATUS_SUCCESS
+                resp[Attributes.STATUS] == STATUS_SUCCESS
+                and resp[Attributes.DATA][Attributes.RES] == STATUS_SUCCESS
             ):
                 self._async_write_ha_state()
                 raise HomeAssistantError(

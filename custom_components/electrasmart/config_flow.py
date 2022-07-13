@@ -4,16 +4,9 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from electra import (
-    ATTR_DATA,
-    ATTR_RES,
-    ATTR_STATUS,
-    ATTR_TOKEN,
-    STATUS_SUCCESS,
-    ElectraAPI,
-    ElectraApiError,
-    generate_imei,
-)
+from electrasmart.api import Attributes, ElectraApiError, ElectraAPI, STATUS_SUCCESS
+from electrasmart.api.utils import generate_imei
+
 import voluptuous as vol
 
 from homeassistant import config_entries
@@ -45,7 +38,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> FlowResult:
         """Handle the initial step."""
 
-        self._api = ElectraAPI(async_get_clientsession(self.hass))
+        if not self._api:
+            self._api = ElectraAPI(async_get_clientsession(self.hass))
+
         errors: dict[str, Any] = {}
 
         if user_input is None:
@@ -91,8 +86,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             _LOGGER.error("Failed to connect to API: %s", exp)
             return self._show_setup_form(user_input, {"base": "cannot_connect"}, "user")
 
-        if resp[ATTR_STATUS] == STATUS_SUCCESS:
-            if resp[ATTR_DATA][ATTR_RES] != STATUS_SUCCESS:
+        if resp[Attributes.STATUS] == STATUS_SUCCESS:
+            if resp[Attributes.DATA][Attributes.RES] != STATUS_SUCCESS:
                 return self._show_setup_form(
                     user_input, {CONF_PHONE_NUMBER: "invalid_phone_number"}, "user"
                 )
@@ -112,14 +107,16 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 user_input, {"base": "cannot_connect"}, CONF_OTP
             )
 
-        if resp[ATTR_DATA][ATTR_RES] == STATUS_SUCCESS:
-            self._token = resp[ATTR_DATA][ATTR_TOKEN]
+        if resp[Attributes.DATA][Attributes.RES] == STATUS_SUCCESS:
+            _LOGGER.debug(resp)
+            self._token = resp[Attributes.DATA][Attributes.TOKEN]
 
             data = {
                 CONF_TOKEN: self._token,
                 CONF_IMEI: self._imei,
                 CONF_PHONE_NUMBER: self._phone_number,
             }
+            _LOGGER.debug(data)
             return self.async_create_entry(title=self._phone_number, data=data)
         return self._show_setup_form(user_input, {CONF_OTP: "invalid_auth"}, CONF_OTP)
 
