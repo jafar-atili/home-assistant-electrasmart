@@ -108,7 +108,6 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             )
 
         if resp[Attributes.DATA][Attributes.RES] == STATUS_SUCCESS:
-            _LOGGER.debug(resp)
             self._token = resp[Attributes.DATA][Attributes.TOKEN]
 
             data = {
@@ -116,7 +115,6 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 CONF_IMEI: self._imei,
                 CONF_PHONE_NUMBER: self._phone_number,
             }
-            _LOGGER.debug(data)
             return self.async_create_entry(title=self._phone_number, data=data)
         return self._show_setup_form(user_input, {CONF_OTP: "invalid_auth"}, CONF_OTP)
 
