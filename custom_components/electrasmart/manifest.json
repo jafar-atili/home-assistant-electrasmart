@@ -1,15 +1,14 @@
 {
-  {
     "domain": "electrasmart",
     "name": "Electra Smart",
     "config_flow": true,
     "documentation": "https://www.home-assistant.io/integrations/electrasmart",
-    "requirements": ["pyelectra==1.0.1"],
+    "requirements": ["pyelectra==1.0.2"],
     "ssdp": [],
     "zeroconf": [],
     "homekit": {},
     "dependencies": [],
     "codeowners": ["@jafar-atili"],
     "iot_class": "cloud_polling",
-    "version": "1.2.0"
+    "version": "1.2.1"
 }
