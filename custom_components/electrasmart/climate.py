@@ -46,7 +46,7 @@ from homeassistant.exceptions import (
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import API_DELAY, DOMAIN, CONSECUTIVE_FAILURE_THRESHOLD
+from .const import API_DELAY, DOMAIN, CONSECUTIVE_FAILURE_THRESHOLD, UNAVAILABLE_THRESH_SEC
 
 FAN_ELECTRA_TO_HASS = {
     OperationMode.FAN_SPEED_AUTO: FAN_AUTO,
