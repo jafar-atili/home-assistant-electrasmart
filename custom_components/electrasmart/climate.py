@@ -46,7 +46,13 @@ from homeassistant.exceptions import (
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import API_DELAY, DOMAIN, CONSECUTIVE_FAILURE_THRESHOLD, UNAVAILABLE_THRESH_SEC
+from .const import (
+    API_DELAY,
+    DOMAIN,
+    CONSECUTIVE_FAILURE_THRESHOLD,
+    SCAN_INTERVAL_SEC,
+    UNAVAILABLE_THRESH_SEC,
+)
 
 FAN_ELECTRA_TO_HASS = {
     OperationMode.FAN_SPEED_AUTO: FAN_AUTO,
@@ -88,8 +94,8 @@ HVAC_ACTION_ELECTRA_TO_HASS = {
 _LOGGER = logging.getLogger(__name__)
 
 
-SCAN_INTERVAL = timedelta(seconds=60)
-PARALLEL_UPDATES = 1
+SCAN_INTERVAL = timedelta(seconds=SCAN_INTERVAL_SEC)
+PARALLEL_UPDATES = 0
 
 
 async def async_setup_entry(
@@ -172,6 +178,8 @@ class ElectraClimate(ClimateEntity):
         self._last_state_update = 0
         self._consecutive_failures = 0
         self._attr_available = not device.is_disconnected(UNAVAILABLE_THRESH_SEC)
+        self._skip_update = True
+        self._available = True
 
         _LOGGER.debug("Added %s Electra AC device", self._attr_name)
 
@@ -189,23 +197,31 @@ class ElectraClimate(ClimateEntity):
         self._last_state_update = 0
 
         try:
-            await self._api.get_last_telemtry(self._electra_ac_device)
+            # skip the first update only, as we get the devices with thier current state
+            if self._skip_update:
+                self._skip_update = False
+            else:
+                await self._api.get_last_telemtry(self._electra_ac_device)
+
             if self._electra_ac_device.is_disconnected(UNAVAILABLE_THRESH_SEC):
-                if self._attr_available:
+                # show the warning once on a state change
+                if self._available:
                     _LOGGER.warning(
-                        "%s (%s) is not available, check its status in the Electra Smart mobile app",
-                        self._electra_ac_device.mac,
+                        "Electra AC %s (%s) is not available, check its status in the Electra Smart mobile app",
                         self._electra_ac_device.name,
+                        self._electra_ac_device.mac,
                     )
+                    self._available = False
                 self._attr_available = False
                 return
 
-            if not self._attr_available:
+            if not self._available:
                 _LOGGER.warning(
                     "%s (%s) is now available",
                     self._electra_ac_device.mac,
                     self._electra_ac_device.name,
                 )
+                self._available = True
                 self._attr_available = True
 
             _LOGGER.debug(
