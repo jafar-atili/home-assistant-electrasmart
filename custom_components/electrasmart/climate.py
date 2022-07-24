@@ -1,326 +1,141 @@
-"""Support for the Electra climate."""
-from __future__ import annotations
+import json
 
-from datetime import timedelta
-import logging
-import time
-from typing import List
+from typing import Dict, List
 
-from electrasmart.api import ElectraApiError, Attributes, ElectraAPI, STATUS_SUCCESS
-from electrasmart.device import OperationMode, ElectraAirConditioner
-from electrasmart.device.const import MAX_TEMP, MIN_TEMP, Feature
+from .const import OperationMode, Feature
 
 
-from homeassistant.components.climate import ClimateEntity
-from homeassistant.components.climate.const import (
-    CURRENT_HVAC_COOL,
-    CURRENT_HVAC_DRY,
-    CURRENT_HVAC_FAN,
-    CURRENT_HVAC_HEAT,
-    CURRENT_HVAC_OFF,
-    FAN_AUTO,
-    FAN_HIGH,
-    FAN_LOW,
-    FAN_MEDIUM,
-    HVAC_MODE_AUTO,
-    HVAC_MODE_COOL,
-    HVAC_MODE_DRY,
-    HVAC_MODE_FAN_ONLY,
-    HVAC_MODE_HEAT,
-    HVAC_MODE_OFF,
-    SWING_BOTH,
-    SWING_HORIZONTAL,
-    SWING_OFF,
-    SWING_VERTICAL,
-    ClimateEntityFeature,
-)
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import ATTR_TEMPERATURE, TEMP_CELSIUS
-from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import (
-    ConfigEntryAuthFailed,
-    HomeAssistantError,
-    ConfigEntryNotReady,
-)
-from homeassistant.helpers.entity import DeviceInfo
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+class ElectraAirConditioner(object):
+    def __init__(self, data) -> None:
+        self.id: str = data["id"]
+        self.name: str = data["name"]
+        self.regdate: str = data["regdate"]
+        self.model = data["model"]
+        self.mac: str = data["mac"]
+        self.serial_number: str = data["sn"]
+        self.manufactor: str = data["manufactor"]
+        self.type: str = data["deviceTypeName"]
+        self.status: str = data["status"]
+        self.token: str = data["deviceToken"]
+        self._time_delta: int = 0
+        self.features: List[Feature] = []
 
-from .const import API_DELAY, DOMAIN, CONSECUTIVE_FAILURE_THRESHOLD
+        self.current_mode: str = None
+        self.collected_measure: int = None
+        self._oper_data: Dict = None
 
-FAN_ELECTRA_TO_HASS = {
-    OperationMode.FAN_SPEED_AUTO: FAN_AUTO,
-    OperationMode.FAN_SPEED_LOW: FAN_LOW,
-    OperationMode.FAN_SPEED_MED: FAN_MEDIUM,
-    OperationMode.FAN_SPEED_HIGH: FAN_HIGH,
-}
+    def is_disconnected(self, thresh_sec: int = 60) -> bool:
+        return self._time_delta > thresh_sec
 
-FAN_HASS_TO_ELECTRA = {
-    FAN_AUTO: OperationMode.FAN_SPEED_AUTO,
-    FAN_LOW: OperationMode.FAN_SPEED_LOW,
-    FAN_MEDIUM: OperationMode.FAN_SPEED_MED,
-    FAN_HIGH: OperationMode.FAN_SPEED_HIGH,
-}
+    def update_features(self) -> None:
+        if "VSWING" in self._oper_data:
+            self.features.append(Feature.V_SWING)
+        if "HSWING" in self._oper_data:
+            self.features.append(Feature.H_SWING)
 
-HVAC_MODE_ELECTRA_TO_HASS = {
-    OperationMode.MODE_COOL: HVAC_MODE_COOL,
-    OperationMode.MODE_HEAT: HVAC_MODE_HEAT,
-    OperationMode.MODE_FAN: HVAC_MODE_FAN_ONLY,
-    OperationMode.MODE_DRY: HVAC_MODE_DRY,
-    OperationMode.MODE_AUTO: HVAC_MODE_AUTO,
-}
+    def get_sensor_temperature(self) -> int:
+        return self.collected_measure
 
-HVAC_MODE_HASS_TO_ELECTRA = {
-    HVAC_MODE_COOL: OperationMode.MODE_COOL,
-    HVAC_MODE_HEAT: OperationMode.MODE_HEAT,
-    HVAC_MODE_FAN_ONLY: OperationMode.MODE_FAN,
-    HVAC_MODE_DRY: OperationMode.MODE_DRY,
-    HVAC_MODE_AUTO: OperationMode.MODE_AUTO,
-}
+    def get_mode(self) -> str:
+        return self._oper_data["AC_MODE"]
 
-HVAC_ACTION_ELECTRA_TO_HASS = {
-    OperationMode.MODE_COOL: CURRENT_HVAC_COOL,
-    OperationMode.MODE_HEAT: CURRENT_HVAC_HEAT,
-    OperationMode.MODE_FAN: CURRENT_HVAC_FAN,
-    OperationMode.MODE_DRY: CURRENT_HVAC_DRY,
-}
+    def set_mode(self, mode: str) -> None:
+        if mode in [
+            OperationMode.MODE_AUTO,
+            OperationMode.MODE_COOL,
+            OperationMode.MODE_DRY,
+            OperationMode.MODE_FAN,
+            OperationMode.MODE_HEAT,
+        ]:
+            if mode != self._oper_data["AC_MODE"]:
+                self._oper_data["AC_MODE"] = mode
 
-_LOGGER = logging.getLogger(__name__)
-
-
-SCAN_INTERVAL = timedelta(seconds=60)
-PARALLEL_UPDATES = 1
-
-
-async def async_setup_entry(
-    hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
-) -> None:
-    """Add Electra AC devices."""
-    api: ElectraAPI = hass.data[DOMAIN][entry.entry_id]
-    devices: List[ElectraAirConditioner] = await get_devices(api)
-
-    _LOGGER.debug("Discovered %i Electra devices", len(devices))
-    async_add_entities((ElectraClimate(device, api) for device in devices), True)
-
-
-async def get_devices(api: ElectraAPI) -> List[ElectraAirConditioner]:
-    """Return Electra."""
-    _LOGGER.debug("Fetching Electra AC devices")
-    try:
-        return await api.get_devices()
-    except ElectraApiError as exp:
-        err_message = f"Error communicating with API: {exp}"
-        if "client error" in err_message:
-            err_message += ", Check your internet connection."
-            raise ConfigEntryNotReady(err_message) from exp
-
-        if Attributes.INTRUDER_LOCKOUT in err_message:
-            err_message += ", You must re-authenticate by adding the integration again"
-            raise ConfigEntryAuthFailed(err_message) from exp
-
-
-class ElectraClimate(ClimateEntity):
-    """Define an Electra sensor."""
-
-    def __init__(self, device: ElectraAirConditioner, api: ElectraAPI) -> None:
-        """Initialize Electra climate entity."""
-        self._api = api
-        self._electra_ac_device = device
-        self._attr_name = device.name
-        self._attr_unique_id = device.mac
-        self._attr_supported_features = (
-            ClimateEntityFeature.TARGET_TEMPERATURE
-            | ClimateEntityFeature.SWING_MODE
-            | ClimateEntityFeature.FAN_MODE
-        )
-        self._attr_fan_modes = [FAN_AUTO, FAN_HIGH, FAN_MEDIUM, FAN_LOW]
-        self._attr_target_temperature_step = 1
-        self._attr_max_temp = MAX_TEMP
-        self._attr_min_temp = MIN_TEMP
-        self._attr_temperature_unit = TEMP_CELSIUS
-        self._attr_swing_modes = []
-
-        if Feature.V_SWING in self._electra_ac_device.features:
-            self._attr_swing_modes.append(SWING_VERTICAL)
-        if Feature.H_SWING in self._electra_ac_device.features:
-            self._attr_swing_modes.append(SWING_HORIZONTAL)
-        if (
-            SWING_HORIZONTAL in self._attr_swing_modes
-            and SWING_VERTICAL in self._attr_swing_modes
-        ):
-            self._attr_swing_modes.append(SWING_BOTH)
-        if self._attr_swing_modes:
-            self._attr_swing_modes.append(SWING_OFF)
-
-        self._attr_hvac_modes = [
-            HVAC_MODE_OFF,
-            HVAC_MODE_HEAT,
-            HVAC_MODE_COOL,
-            HVAC_MODE_DRY,
-            HVAC_MODE_FAN_ONLY,
-            HVAC_MODE_AUTO,
-        ]
-
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, self._electra_ac_device.mac)},
-            name=self.name,
-            model=self._electra_ac_device.model,
-            manufacturer=self._electra_ac_device.manufactor,
-        )
-
-        # This attribute will be used to mark the time we communicated a command to the API
-        self._last_state_update = 0
-        self._consecutive_failures = 0
-
-        _LOGGER.debug("Added %s Electra AC device", self._attr_name)
-
-    async def async_update(self):
-        """Update Electra device."""
-
-        # if we communicated a change to the API in the last X seconds, don't receive any updates-
-        # as the API takes few seconds until it start sending the last change
-        if self._last_state_update and int(time.time()) < (
-            self._last_state_update + API_DELAY
-        ):
-            _LOGGER.debug("Skipping state update, keeping old values")
-            return
-
-        self._last_state_update = 0
-
-        try:
-            await self._api.get_last_telemtry(self._electra_ac_device)
-            _LOGGER.debug(
-                "%s (%s) state updated: %s",
-                self._electra_ac_device.mac,
-                self._electra_ac_device.name,
-                self._electra_ac_device.__dict__,
-            )
-        except ElectraApiError as exp:
-            self._consecutive_failures += 1
-            _LOGGER.warning(
-                "Failed to get %s state: %s (try #%i since last success), keeping old state",
-                self._electra_ac_device.name,
-                exp,
-                self._consecutive_failures,
+    def set_horizontal_swing(self, enable: bool):
+        if "HSWING" in self._oper_data:
+            self._oper_data["HSWING"] = (
+                OperationMode.ON if enable else OperationMode.OFF
             )
 
-            if self._consecutive_failures >= CONSECUTIVE_FAILURE_THRESHOLD:
-                raise HomeAssistantError(
-                    "Failed to get %s state: %s for the %i time",
-                    self._electra_ac_device.name,
-                    exp,
-                    self._consecutive_failures,
-                ) from ElectraApiError
-        else:
-            self._consecutive_failures = 0
-            self._update_device_attrs()
-
-    async def async_set_fan_mode(self, fan_mode: str) -> None:
-        """Set AC fand mode."""
-        mode = FAN_HASS_TO_ELECTRA[fan_mode]
-        self._electra_ac_device.set_fan_speed(mode)
-        await self._async_update_electra_ac_state()
-
-    async def async_set_hvac_mode(self, hvac_mode: str) -> None:
-        """Set hvac mode."""
-
-        if hvac_mode == HVAC_MODE_OFF:
-            self._electra_ac_device.turn_off()
-        else:
-            self._electra_ac_device.set_mode(HVAC_MODE_HASS_TO_ELECTRA[hvac_mode])
-            self._electra_ac_device.turn_on()
-
-        await self._async_update_electra_ac_state()
-
-    async def async_set_temperature(self, **kwargs) -> None:
-        """Set new target temperature."""
-        self._electra_ac_device.set_temperature(int(kwargs[ATTR_TEMPERATURE]))
-        await self._async_update_electra_ac_state()
-
-    def _update_device_attrs(self):
-
-        self._attr_fan_mode = FAN_ELECTRA_TO_HASS[
-            self._electra_ac_device.get_fan_speed()
-        ]
-        self._attr_current_temperature = (
-            self._electra_ac_device.get_sensor_temperature()
-        )
-        self._attr_target_temperature = self._electra_ac_device.get_temperature()
-
-        self._attr_hvac_mode = (
-            HVAC_MODE_OFF
-            if not self._electra_ac_device.is_on()
-            else HVAC_MODE_ELECTRA_TO_HASS[self._electra_ac_device.get_mode()]
-        )
-
-        if self._electra_ac_device.get_mode() == OperationMode.MODE_AUTO:
-            self._attr_hvac_action = None
-        else:
-            self._attr_hvac_action = (
-                CURRENT_HVAC_OFF
-                if not self._electra_ac_device.is_on()
-                else HVAC_ACTION_ELECTRA_TO_HASS[self._electra_ac_device.get_mode()]
+    def set_vertical_swing(self, enable: bool):
+        if "VSWING" in self._oper_data:
+            self._oper_data["VSWING"] = (
+                OperationMode.ON if enable else OperationMode.OFF
             )
 
-        if (
-            self._electra_ac_device.is_horizontal_swing()
-            and self._electra_ac_device.is_vertical_swing()
-        ):
-            self._attr_swing_mode = SWING_BOTH
-        elif self._electra_ac_device.is_horizontal_swing():
-            self._attr_swing_mode = SWING_HORIZONTAL
-        elif self._electra_ac_device.is_vertical_swing():
-            self._attr_swing_mode = SWING_VERTICAL
+    def is_vertical_swing(self):
+        if "VSWING" in self._oper_data:
+            return self._oper_data["VSWING"] == OperationMode.ON
+        return False
+
+    def is_horizontal_swing(self):
+        if "HSWING" in self._oper_data:
+            return self._oper_data["HSWING"] == OperationMode.ON
+        return False
+
+    def is_on(self):
+        if "TURN_ON_OFF" in self._oper_data:
+            return self._oper_data["TURN_ON_OFF"] == OperationMode.ON
         else:
-            self._attr_swing_mode = SWING_OFF
+            return self._oper_data["AC_MODE"] != OperationMode.STANDBY
 
-    async def async_set_swing_mode(self, swing_mode: str) -> None:
-        """Set AC swing mdde."""
-        if swing_mode == SWING_BOTH:
-            self._electra_ac_device.set_horizontal_swing(True)
-            self._electra_ac_device.set_vertical_swing(True)
+    def turn_on(self):
+        if not self.is_on():
+            if "TURN_ON_OFF" in self._oper_data:
+                self._oper_data["TURN_ON_OFF"] = OperationMode.ON
 
-        elif swing_mode == SWING_VERTICAL:
-            self._electra_ac_device.set_horizontal_swing(False)
-            self._electra_ac_device.set_vertical_swing(True)
+    def turn_off(self):
+        if self.is_on():
+            if "TURN_ON_OFF" in self._oper_data:
+                self._oper_data["TURN_ON_OFF"] = OperationMode.OFF
+            else:
+                self._oper_data["AC_MODE"] = OperationMode.STANDBY
 
-        elif swing_mode == SWING_HORIZONTAL:
-            self._electra_ac_device.set_horizontal_swing(True)
-            self._electra_ac_device.set_vertical_swing(False)
-        else:
-            self._electra_ac_device.set_horizontal_swing(False)
-            self._electra_ac_device.set_vertical_swing(False)
+    def get_temperature(self):
+        return int(self._oper_data["SPT"])
 
-        await self._async_update_electra_ac_state()
+    def set_temperature(self, val: int):
+        if self.get_temperature() != val:
+            self._oper_data["SPT"] = str(val)
 
-    async def _async_update_electra_ac_state(self) -> None:
-        """Send HVAC parameters to API."""
+    def get_fan_speed(self):
+        return self._oper_data["FANSPD"]
 
-        try:
-            resp = await self._api.set_state(self._electra_ac_device)
-        except ElectraApiError as exp:
-            err_message = f"Error communicating with API: {exp}"
-            if "client error" in err_message:
-                err_message += ", Check your internet connection."
-                raise HomeAssistantError(err_message) from ElectraApiError
+    def set_fan_speed(self, speed):
+        if speed in [
+            OperationMode.FAN_SPEED_AUTO,
+            OperationMode.FAN_SPEED_HIGH,
+            OperationMode.FAN_SPEED_MED,
+            OperationMode.FAN_SPEED_LOW,
+        ]:
+            if speed != self._oper_data["FANSPD"]:
+                self._oper_data["FANSPD"] = speed
 
-            if Attributes.INTRUDER_LOCKOUT in err_message:
-                err_message += (
-                    ", You must re-authenticate by adding the integration again"
-                )
-                raise ConfigEntryAuthFailed(err_message) from ElectraApiError
+    def set_turbo_mode(self, enable: bool):
+        self._oper_data["TURBO"] = OperationMode.ON if enable else OperationMode.OFF
 
-            self._async_write_ha_state()
+    def get_turbo_mode(self):
+        return self._oper_data["SHABAT"] == OperationMode.ON
 
-        else:
-            if not (
-                resp[Attributes.STATUS] == STATUS_SUCCESS
-                and resp[Attributes.DATA][Attributes.RES] == STATUS_SUCCESS
-            ):
-                self._async_write_ha_state()
-                raise HomeAssistantError(
-                    f"Failed to update {self._attr_name}, error: {resp}"
-                )
+    def set_shabat_mode(self, enable: bool):
+        self._oper_data["SHABAT"] = OperationMode.ON if enable else OperationMode.OFF
 
-            self._update_device_attrs()
-            self._last_state_update = int(time.time())
-            self._async_write_ha_state()
+    def get_shabat_mode(self):
+        return self._oper_data["SHABAT"] == OperationMode.ON
+
+    def update_operation_states(self, data):
+        self._oper_data = json.loads(data["commandJson"]["OPER"])["OPER"]
+        self._time_delta = data["timeDelta"]
+        measurments = json.loads(data["commandJson"]["DIAG_L2"])["DIAG_L2"]
+        if "I_RAT" in measurments:
+            self.collected_measure = int(measurments["I_RAT"])
+        if "I_CALC_AT" in measurments:
+            self.collected_measure = int(measurments["I_CALC_AT"])
+
+        self.current_mode = measurments["O_ODU_MODE"]
+
+    def get_operation_state(self):
+        if "AC_STSRC" in self._oper_data:
+            self._oper_data["AC_STSRC"] = "WI-FI"
+
+        json_state = json.dumps({"OPER": self._oper_data})
+        return json_state

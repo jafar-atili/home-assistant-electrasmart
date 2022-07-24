@@ -4,9 +4,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from electrasmart.api import Attributes, ElectraApiError, ElectraAPI, STATUS_SUCCESS
+from electrasmart.api import STATUS_SUCCESS, Attributes, ElectraAPI, ElectraApiError
 from electrasmart.api.utils import generate_imei
-
 import voluptuous as vol
 
 from homeassistant import config_entries
