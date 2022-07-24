@@ -241,10 +241,7 @@ class ElectraClimate(ClimateEntity):
 
             if self._consecutive_failures >= CONSECUTIVE_FAILURE_THRESHOLD:
                 raise HomeAssistantError(
-                    "Failed to get %s state: %s for the %i time",
-                    self._electra_ac_device.name,
-                    exp,
-                    self._consecutive_failures,
+                    f"Failed to get {self._electra_ac_device.name} state: {exp} for the {self._consecutive_failures} time",
                 ) from ElectraApiError
         else:
             self._consecutive_failures = 0
