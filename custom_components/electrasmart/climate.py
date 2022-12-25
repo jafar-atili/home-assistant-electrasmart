@@ -42,6 +42,8 @@ from .const import (
     DOMAIN,
     SCAN_INTERVAL_SEC,
     UNAVAILABLE_THRESH_SEC,
+    PRESET_NONE,
+    PRESET_SHABAT,
 )
 
 FAN_ELECTRA_TO_HASS = {
@@ -130,6 +132,7 @@ class ElectraClimate(ClimateEntity):
             ClimateEntityFeature.TARGET_TEMPERATURE
             | ClimateEntityFeature.SWING_MODE
             | ClimateEntityFeature.FAN_MODE
+            | ClimateEntityFeature.PRESET_MODE
         )
         self._attr_fan_modes = [FAN_AUTO, FAN_HIGH, FAN_MEDIUM, FAN_LOW]
         self._attr_target_temperature_step = 1
@@ -157,6 +160,11 @@ class ElectraClimate(ClimateEntity):
             HVACMode.DRY,
             HVACMode.FAN_ONLY,
             HVACMode.AUTO,
+        ]
+
+        self._attr_preset_modes = [
+            PRESET_NONE,
+            PRESET_SHABAT,
         ]
 
         self._attr_device_info = DeviceInfo(
@@ -298,6 +306,12 @@ class ElectraClimate(ClimateEntity):
         else:
             self._attr_swing_mode = SWING_OFF
 
+        self._attr_preset_mode = (
+            PRESET_SHABAT
+            if self._electra_ac_device.get_shabat_mode()
+            else PRESET_NONE
+        )
+
     async def async_set_swing_mode(self, swing_mode: str) -> None:
         """Set AC swing mdde."""
         if swing_mode == SWING_BOTH:
@@ -349,3 +363,12 @@ class ElectraClimate(ClimateEntity):
             self._update_device_attrs()
             self._last_state_update = int(time.time())
             self._async_write_ha_state()
+
+    async def async_set_preset_mode(self, preset_mode: str) -> None:
+        """Set Preset mode."""
+        if preset_mode == PRESET_SHABAT:
+            self._electra_ac_device.set_shabat_mode(True)
+        else:
+            self._electra_ac_device.set_shabat_mode(False)
+
+        await self._async_update_electra_ac_state()
