@@ -1,11 +1,14 @@
 """The Electra Air Conditioner integration."""
 from __future__ import annotations
 
-from electrasmart.api import ElectraAPI
+from typing import cast
+
+from electrasmart.api import Attributes, ElectraAPI, ElectraApiError
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_TOKEN, Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import CONF_IMEI, DOMAIN
@@ -14,21 +17,28 @@ PLATFORMS: list[Platform] = [Platform.CLIMATE]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up Electra Air Conditioner from a config entry."""
+    """Set up Electra Smart Air Conditioner from a config entry."""
     hass.data.setdefault(DOMAIN, {})
-
-    imei = entry.data[CONF_IMEI]
-    token = entry.data[CONF_TOKEN]
-
-    websession = async_get_clientsession(hass)
-
-    electra_api = ElectraAPI(websession, imei, token)
-
     entry.async_on_unload(entry.add_update_listener(update_listener))
-    hass.data[DOMAIN][entry.entry_id] = electra_api
+    hass.data[DOMAIN][entry.entry_id] = ElectraAPI(
+        async_get_clientsession(hass), entry.data[CONF_IMEI], entry.data[CONF_TOKEN]
+    )
+
+    try:
+        await cast(ElectraAPI, hass.data[DOMAIN][entry.entry_id]).fetch_devices()
+    except ElectraApiError as exp:
+        err_message = f"Error communicating with API: {exp}"
+        if "client error" in err_message:
+            err_message += ", Check your internet connection."
+            raise ConfigEntryNotReady(err_message) from exp
+
+        if Attributes.INTRUDER_LOCKOUT in err_message:
+            err_message += ", You must re-authenticate"
+            raise ConfigEntryAuthFailed(err_message) from exp
+
+        raise ConfigEntryNotReady(err_message) from exp
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-
     return True
 
 
