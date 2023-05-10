@@ -22,7 +22,6 @@ from homeassistant.components.climate import (
     SWING_VERTICAL,
     ClimateEntity,
     ClimateEntityFeature,
-    HVACAction,
     HVACMode,
 )
 from homeassistant.config_entries import ConfigEntry
@@ -38,8 +37,6 @@ from .const import (
     DOMAIN,
     SCAN_INTERVAL_SEC,
     UNAVAILABLE_THRESH_SEC,
-    PRESET_NONE,
-    PRESET_SHABAT,
 )
 
 FAN_ELECTRA_TO_HASS = {
@@ -70,13 +67,6 @@ HVAC_MODE_HASS_TO_ELECTRA = {
     HVACMode.FAN_ONLY: OperationMode.MODE_FAN,
     HVACMode.DRY: OperationMode.MODE_DRY,
     HVACMode.AUTO: OperationMode.MODE_AUTO,
-}
-
-HVAC_ACTION_ELECTRA_TO_HASS = {
-    OperationMode.MODE_COOL: HVACAction.COOLING,
-    OperationMode.MODE_HEAT: HVACAction.HEATING,
-    OperationMode.MODE_FAN: HVACAction.FAN,
-    OperationMode.MODE_DRY: HVACAction.DRYING,
 }
 
 ELECTRA_FAN_MODES = [FAN_AUTO, FAN_HIGH, FAN_MEDIUM, FAN_LOW]
@@ -140,11 +130,6 @@ class ElectraClimateEntity(ClimateEntity):
             swing_modes.append(SWING_OFF)
             self._attr_swing_modes = swing_modes
             self._attr_supported_features |= ClimateEntityFeature.SWING_MODE
-
-        self._attr_preset_modes = [
-            PRESET_NONE,
-            PRESET_SHABAT,
-        ]
 
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, self._electra_ac_device.mac)},
@@ -269,15 +254,6 @@ class ElectraClimateEntity(ClimateEntity):
             else HVAC_MODE_ELECTRA_TO_HASS[self._electra_ac_device.get_mode()]
         )
 
-        if self._electra_ac_device.get_mode() == OperationMode.MODE_AUTO:
-            self._attr_hvac_action = None
-        else:
-            self._attr_hvac_action = (
-                HVACAction.OFF
-                if not self._electra_ac_device.is_on()
-                else HVAC_ACTION_ELECTRA_TO_HASS[self._electra_ac_device.get_mode()]
-            )
-
         if (
             self._electra_ac_device.is_horizontal_swing()
             and self._electra_ac_device.is_vertical_swing()
@@ -289,10 +265,6 @@ class ElectraClimateEntity(ClimateEntity):
             self._attr_swing_mode = SWING_VERTICAL
         else:
             self._attr_swing_mode = SWING_OFF
-
-        self._attr_preset_mode = (
-            PRESET_SHABAT if self._electra_ac_device.get_shabat_mode() else PRESET_NONE
-        )
 
     async def async_set_swing_mode(self, swing_mode: str) -> None:
         """Set AC swing mdde."""
@@ -310,15 +282,6 @@ class ElectraClimateEntity(ClimateEntity):
         else:
             self._electra_ac_device.set_horizontal_swing(False)
             self._electra_ac_device.set_vertical_swing(False)
-
-        await self._async_operate_electra_ac()
-
-    async def async_set_preset_mode(self, preset_mode: str) -> None:
-        """Set Preset mode."""
-        if preset_mode == PRESET_SHABAT:
-            self._electra_ac_device.set_shabat_mode(True)
-        else:
-            self._electra_ac_device.set_shabat_mode(False)
 
         await self._async_operate_electra_ac()
 
