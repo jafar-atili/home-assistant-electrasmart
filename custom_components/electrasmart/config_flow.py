@@ -1,7 +1,7 @@
 """Config flow for Electra Air Conditioner integration."""
+
 from __future__ import annotations
 
-from collections.abc import Mapping
 import logging
 from typing import Any
 
@@ -9,9 +9,8 @@ from electrasmart.api import STATUS_SUCCESS, Attributes, ElectraAPI, ElectraApiE
 from electrasmart.api.utils import generate_imei
 import voluptuous as vol
 
-from homeassistant import config_entries
+from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
 from homeassistant.const import CONF_TOKEN
-from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import CONF_IMEI, CONF_OTP, CONF_PHONE_NUMBER, DOMAIN
@@ -19,7 +18,7 @@ from .const import CONF_IMEI, CONF_OTP, CONF_PHONE_NUMBER, DOMAIN
 _LOGGER = logging.getLogger(__name__)
 
 
-class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
+class ElectraSmartConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Electra Air Conditioner."""
 
     VERSION = 1
@@ -35,7 +34,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         """Handle the initial step."""
 
         if not self._api:
@@ -53,7 +52,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         user_input: dict[str, str] | None = None,
         errors: dict[str, str] | None = None,
         step_id: str = "user",
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         """Show the setup form to the user."""
         if user_input is None:
             user_input = {}
@@ -74,7 +73,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             description_placeholders=self._description_placeholders,
         )
 
-    async def _validate_phone_number(self, user_input: dict[str, str]) -> FlowResult:
+    async def _validate_phone_number(
+        self, user_input: dict[str, str]
+    ) -> ConfigFlowResult:
         """Check if config is valid and create entry if so."""
 
         self._phone_number = user_input[CONF_PHONE_NUMBER]
@@ -103,7 +104,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def _validate_one_time_password(
         self, user_input: dict[str, str]
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         self._otp = user_input[CONF_OTP]
 
         assert isinstance(self._api, ElectraAPI)
@@ -136,7 +137,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self,
         user_input: dict[str, Any] | None = None,
         errors: dict[str, str] | None = None,
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         """Ask the verification code to the user."""
         if errors is None:
             errors = {}
@@ -149,7 +150,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def _show_otp_form(
         self,
         errors: dict[str, str] | None = None,
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         """Show the verification_code form to the user."""
 
         return self.async_show_form(
@@ -157,26 +158,3 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data_schema=vol.Schema({vol.Required(CONF_OTP): str}),
             errors=errors or {},
         )
-
-    async def async_step_reauth(self, entry_data: Mapping[str, Any]) -> FlowResult:
-        """Handle reauthorization request from Electra Smart."""
-        self._api = ElectraAPI(async_get_clientsession(self.hass))
-        self._phone_number = entry_data[CONF_PHONE_NUMBER]
-        return await self.async_step_reauth_confirm()
-
-    async def async_step_reauth_confirm(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Handle reauthorization flow."""
-        if user_input is None:
-            return self.async_show_form(
-                step_id="reauth_confirm",
-                data_schema=vol.Schema(
-                    {
-                        vol.Required(
-                            CONF_PHONE_NUMBER, default=self._phone_number
-                        ): str,
-                    }
-                ),
-            )
-        return await self.async_step_user({CONF_PHONE_NUMBER: self._phone_number})

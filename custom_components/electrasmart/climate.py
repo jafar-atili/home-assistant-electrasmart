@@ -27,8 +27,8 @@ from homeassistant.components.climate import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_TEMPERATURE, UnitOfTemperature
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
-from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
@@ -109,15 +109,21 @@ class ElectraClimateEntity(ClimateEntity):
     _attr_min_temp = MIN_TEMP
     _attr_temperature_unit = UnitOfTemperature.CELSIUS
     _attr_hvac_modes = ELECTRA_MODES
+    _attr_has_entity_name = True
+    _attr_name = None
+    _enable_turn_on_off_backwards_compatibility = False
 
     def __init__(self, device: ElectraAirConditioner, api: ElectraAPI) -> None:
         """Initialize Electra climate entity."""
         self._api = api
         self._electra_ac_device = device
-        self._attr_name = device.name
         self._attr_unique_id = device.mac
         self._attr_supported_features = (
-            ClimateEntityFeature.TARGET_TEMPERATURE | ClimateEntityFeature.FAN_MODE | ClimateEntityFeature.PRESET_MODE
+            ClimateEntityFeature.TARGET_TEMPERATURE
+            | ClimateEntityFeature.FAN_MODE
+            | ClimateEntityFeature.PRESET_MODE
+            | ClimateEntityFeature.TURN_OFF
+            | ClimateEntityFeature.TURN_ON
         )
 
         swing_modes: list = []
@@ -140,15 +146,17 @@ class ElectraClimateEntity(ClimateEntity):
 
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, self._electra_ac_device.mac)},
-            name=self.name,
+            name=device.name,
             model=self._electra_ac_device.model,
             manufacturer=self._electra_ac_device.manufactor,
         )
 
-        self._last_state_update = 0  # This attribute will be used to mark the time we communicated a command to the API
-        self._consecutive_failures = (
-            0  # count the consecutive update failures, used to print error log
-        )
+        # This attribute will be used to mark the time we communicated
+        # a command to the API
+        self._last_state_update = 0
+
+        # count the consecutive update failures, used to print error log
+        self._consecutive_failures = 0
         self._skip_update = True
         self._was_available = True
 
@@ -165,8 +173,9 @@ class ElectraClimateEntity(ClimateEntity):
     async def async_update(self) -> None:
         """Update Electra device."""
 
-        # if we communicated a change to the API in the last API_DELAY seconds, don't receive any updates-
-        # as the API takes few seconds until it start sending it last recent change
+        # if we communicated a change to the API in the last API_DELAY seconds,
+        # then don't receive any updates as the API takes few seconds
+        # until it start sending it last recent change
         if self._last_state_update and int(time.time()) < (
             self._last_state_update + API_DELAY
         ):
@@ -243,7 +252,11 @@ class ElectraClimateEntity(ClimateEntity):
 
     async def async_set_temperature(self, **kwargs: Any) -> None:
         """Set new target temperature."""
-        self._electra_ac_device.set_temperature(int(kwargs[ATTR_TEMPERATURE]))
+
+        if (temperature := kwargs.get(ATTR_TEMPERATURE)) is None:
+            raise ValueError("No target temperature provided")
+
+        self._electra_ac_device.set_temperature(int(temperature))
         await self._async_operate_electra_ac()
 
     def _update_device_attrs(self) -> None:
@@ -311,27 +324,17 @@ class ElectraClimateEntity(ClimateEntity):
         try:
             resp = await self._api.set_state(self._electra_ac_device)
         except ElectraApiError as exp:
-            err_message = f"Error communicating with API: {exp}"
-            if "client error" in err_message:
-                err_message += ", Check your internet connection."
-                raise HomeAssistantError(err_message) from ElectraApiError
+            raise HomeAssistantError(
+                f"Error communicating with Electra API: {exp}"
+            ) from exp
 
-            if Attributes.INTRUDER_LOCKOUT in err_message:
-                err_message += (
-                    ", You must re-authenticate by adding the integration again"
-                )
-                raise ConfigEntryAuthFailed(err_message) from ElectraApiError
-
+        if not (
+            resp[Attributes.STATUS] == STATUS_SUCCESS
+            and resp[Attributes.DATA][Attributes.RES] == STATUS_SUCCESS
+        ):
             self._async_write_ha_state()
+            raise HomeAssistantError(f"Failed to update {self.name}, error: {resp}")
 
-        else:
-            if not (
-                resp[Attributes.STATUS] == STATUS_SUCCESS
-                and resp[Attributes.DATA][Attributes.RES] == STATUS_SUCCESS
-            ):
-                self._async_write_ha_state()
-                raise HomeAssistantError(f"Failed to update {self.name}, error: {resp}")
-
-            self._update_device_attrs()
-            self._last_state_update = int(time.time())
-            self._async_write_ha_state()
+        self._update_device_attrs()
+        self._last_state_update = int(time.time())
+        self._async_write_ha_state()
