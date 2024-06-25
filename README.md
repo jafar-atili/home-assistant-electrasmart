@@ -1,5 +1,7 @@
 # Electra Smart Integration With Home Assistant
 
+**This integration is already part of HomeAssistant Core, this repo is only for testing purposes**
+
 ![PyPI](https://img.shields.io/pypi/v/pyelectra?label=pypi%20package)
 ![PyPI - Downloads](https://img.shields.io/pypi/dm/pyelectra)
 
